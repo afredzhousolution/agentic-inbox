@@ -423,6 +423,16 @@ export class EmailAgent extends AIChatAgent<any> {
 			console.warn("Pre-read failed, agent will use tools:", (e as Error).message);
 		}
 
+		// ------------------------------------------------------------
+		// 🔍 检测是否为退款请求（基于主题和正文）
+		// 如果是，我们在 AI 提示中追加特殊指令，要求询问用户不满意的功能
+		// ------------------------------------------------------------
+		const isRefundRequest =
+			emailData.subject.toLowerCase().includes("refund") ||
+			emailBody.toLowerCase().includes("refund") ||
+			emailBody.toLowerCase().includes("unused credits");
+
+		// 构建基础 AutoPrompt（始终包含邮件详情和正文）
 		let autoPrompt = `A new email just arrived. Draft an appropriate response using draft_reply.
 
 Email details:
@@ -444,6 +454,21 @@ ${threadContext}`;
 			autoPrompt += `
 
 This is the first message in the thread (no prior conversation).`;
+		}
+
+		// 如果是退款请求，追加专门指令，要求 AI 询问用户对哪些功能不满意及改进建议
+		if (isRefundRequest) {
+			autoPrompt += `
+
+**IMPORTANT INSTRUCTION FOR THIS REFUND REQUEST:**
+The user is requesting a refund and mentioned that the service did not meet their expectations.
+In your draft reply, you MUST:
+- Politely acknowledge their request and express understanding.
+- Ask them specifically which features or aspects of the service they were dissatisfied with.
+- Ask for any suggestions or feedback on how we could improve.
+- Assure them that we will process the refund for unused credits upon their response.
+
+Do NOT simply say "we'll process your refund" without asking for their feedback. The goal is to collect actionable improvement insights.`;
 		}
 
 		autoPrompt += `
