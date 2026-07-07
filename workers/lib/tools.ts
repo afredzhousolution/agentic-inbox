@@ -43,6 +43,16 @@ type RateLimitStub = {
 	checkSendRateLimit: () => Promise<string | null>;
 };
 
+type DraftListResult =
+	| EmailFull[]
+	| {
+			emails?: EmailFull[];
+			messages?: EmailFull[];
+			items?: EmailFull[];
+			data?: EmailFull[];
+			results?: EmailFull[];
+	  };
+
 // ── list_mailboxes ─────────────────────────────────────────────────
 
 export async function toolListMailboxes(env: Env) {
@@ -133,6 +143,46 @@ export async function toolDraftReply(
 > {
 	const stub = getMailboxStub(env, mailboxId);
 
+	// Get the original email for thread_id and quoted text
+	const original = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
+	const threadId = original?.thread_id || params.originalEmailId;
+
+	// Prevent duplicate draft replies for the same original email
+	const draftListResult = (await stub.getEmails({
+		folder: Folders.DRAFT,
+		limit: 500,
+		page: 1,
+		sortColumn: "date",
+		sortDirection: "DESC",
+	})) as DraftListResult;
+
+	const existingDrafts = Array.isArray(draftListResult)
+		? draftListResult
+		: draftListResult.emails ??
+			draftListResult.messages ??
+			draftListResult.items ??
+			draftListResult.data ??
+			draftListResult.results ??
+			[];
+
+	const existingDraft = existingDrafts.find(
+		(draft) => draft.in_reply_to === params.originalEmailId,
+	);
+
+	if (existingDraft) {
+		return {
+			status: "draft_saved",
+			draftId: existingDraft.id,
+			message: "Draft already exists for this email. Skipped creating duplicate draft.",
+			draft: {
+				originalEmailId: params.originalEmailId,
+				to: existingDraft.recipient || params.to,
+				subject: existingDraft.subject || params.subject,
+				body: existingDraft.body || params.body.trim(),
+			},
+		};
+	}
+
 	// Verify/sanitize if requested
 	let processedBody = params.body.trim();
 	if (params.runVerifyDraft) {
@@ -149,10 +199,6 @@ export async function toolDraftReply(
 	}
 
 	const draftId = crypto.randomUUID();
-
-	// Get the original email for thread_id and quoted text
-	const original = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
-	const threadId = original?.thread_id || params.originalEmailId;
 
 	// Append quoted original message
 	const quotedBlock = original
